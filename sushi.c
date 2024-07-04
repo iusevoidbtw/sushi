@@ -1272,7 +1272,7 @@ optlist(int plus)
 {
 	if (plus) {
 		printf("set %co clobber\n",
-				(opts & OPT_STDIN) ? '-' : '+');
+				(opts & OPT_CLOBBER) ? '-' : '+');
 		printf("set %co cmdline\n",
 				(opts & OPT_CMDLINE) ? '-' : '+');
 		printf("set %co exec\n",
