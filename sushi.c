@@ -125,10 +125,13 @@ enum opt {
 struct command {
 	char **argv;
 	size_t argc;
+	char **orig_argv;
 	int *dynallocinfo;
 };
 
 struct cmdinfo {
+	char **vars;
+	char **vals;
 	int canexpandpath;
 	int redirfds[3];
 };
@@ -170,6 +173,7 @@ static void update_laststatus(int status);
 
 /* command parsing */
 static int parsecmd(char *s, struct command *cmd, struct cmdinfo *info);
+static int parseenv(struct command *cmd, struct cmdinfo *info);
 static int parseredir(struct command *cmd, struct cmdinfo *info);
 
 /* memory allocation for commands */
@@ -461,8 +465,12 @@ exec(char *s)
 		struct cmdinfo info;
 		int didglob = 0;
 		int ret = 0;
+		size_t var;
 
 		if (parsecmd(s, &origcmd, &info) < 0)
+			return -1;
+
+		if (parseenv(&origcmd, &info) < 0)
 			return -1;
 
 		if (info.canexpandpath && (opts & OPT_GLOB)) {
@@ -504,6 +512,18 @@ exec(char *s)
 					}
 				}
 
+				/* set env variables */
+				if (info.vars) {
+					for (var = 0; info.vars[var]; ++var) {
+						if (setenv(info.vars[var],
+							info.vals[var],
+							1) < 0) {
+							logerr("setenv:");
+							_exit(MISC_FAILURE_STATUS);
+						}
+					}
+				}
+
 				/* redirection */
 				if (info.redirfds[2] >= 0)
 					close(info.redirfds[2]);
@@ -513,7 +533,7 @@ exec(char *s)
 					if (dup2(info.redirfds[0],
 						info.redirfds[1]) < 0) {
 						logerr("dup2:");
-						return -1;
+						_exit(MISC_FAILURE_STATUS);
 					}
 				}
 
@@ -540,7 +560,11 @@ exec(char *s)
 
 		if (info.redirfds[0] > STDERR_FILENO)
 			if (weclose(info.redirfds[0]) < 0)
-				return -1;
+				ret = -1;
+		if (info.vars) {
+			free(info.vars);
+			free(info.vals);
+		}
 		if (didglob)
 			freecmd(&expcmd);
 		freecmd(&origcmd);
@@ -556,13 +580,18 @@ pipechain(char *s, pid_t *pgid, int *rpipe, int *wpipe, int *closethis)
 	struct command *cmd = &origcmd;
 	struct cmdinfo info;
 	int didglob = 0;
-	int forkfailed = 0;
+	int failed = 0;
+	size_t var;
 
 	pid_t chpid = 0;
 	*closethis = -1;
 
 	if (parsecmd(s, &origcmd, &info) < 0)
 		return -1;
+
+	if (parseenv(&origcmd, &info) < 0)
+		return -1;
+
 	if (info.canexpandpath && (opts & OPT_GLOB)) {
 		if (expand_path(&origcmd, &expcmd) < 0) {
 			freecmd(&origcmd);
@@ -583,7 +612,7 @@ pipechain(char *s, pid_t *pgid, int *rpipe, int *wpipe, int *closethis)
 		switch (chpid) {
 		case -1:
 			logerr("fork:");
-			forkfailed = 1;
+			failed = 1;
 			break;
 		case 0:
 			if (term >= 0) {
@@ -613,21 +642,33 @@ pipechain(char *s, pid_t *pgid, int *rpipe, int *wpipe, int *closethis)
 				/* there's a pipe from the previous process */
 				if (dup2(rpipe[0], STDIN_FILENO) < 0) {
 					logerr("dup2:");
-					return -1;
+					_exit(MISC_FAILURE_STATUS);
 				}
 				if (weclose(rpipe[0]) < 0
 						|| weclose(rpipe[1]) < 0)
-					return -1;
+					_exit(MISC_FAILURE_STATUS);
 			}
 			if (wpipe) {
 				/* there's a pipe to the next process */
 				if (dup2(wpipe[1], STDOUT_FILENO) < 0) {
 					logerr("dup2:");
-					return -1;
+					_exit(MISC_FAILURE_STATUS);
 				}
 				if (weclose(wpipe[0]) < 0
 						|| weclose(wpipe[1]))
-					return -1;
+					_exit(MISC_FAILURE_STATUS);
+			}
+
+			/* set env variables */
+			if (info.vars) {
+				for (var = 0; info.vars[var]; ++var) {
+					if (setenv(info.vars[var],
+						info.vals[var],
+						1) < 0) {
+						logerr("setenv:");
+						_exit(MISC_FAILURE_STATUS);
+					}
+				}
 			}
 
 			/* redirection */
@@ -638,7 +679,7 @@ pipechain(char *s, pid_t *pgid, int *rpipe, int *wpipe, int *closethis)
 				if (dup2(info.redirfds[0],
 						info.redirfds[1]) < 0) {
 					logerr("dup2:");
-					return -1;
+					_exit(MISC_FAILURE_STATUS);
 				}
 			}
 
@@ -654,11 +695,14 @@ pipechain(char *s, pid_t *pgid, int *rpipe, int *wpipe, int *closethis)
 		}
 	}
 
-	if (rpipe)
-		if (weclose(rpipe[0]) < 0 || weclose(rpipe[1]) < 0)
-			return -1;
+	if (rpipe && (weclose(rpipe[0]) < 0 || weclose(rpipe[1]) < 0))
+		failed = 1;
 	if (info.redirfds[0] > STDERR_FILENO)
 		*closethis = info.redirfds[0];
+	if (info.vars) {
+		free(info.vars);
+		free(info.vals);
+	}
 	if (didglob)
 		freecmd(&expcmd);
 	freecmd(&origcmd);
@@ -666,7 +710,7 @@ pipechain(char *s, pid_t *pgid, int *rpipe, int *wpipe, int *closethis)
 		logerr("tcgetpgrp:");
 		return -1;
 	}
-	if (forkfailed)
+	if (failed)
 		return -1;
 	return chpid;
 }
@@ -970,6 +1014,64 @@ parsecmd(char *s, struct command *cmd, struct cmdinfo *info)
 }
 
 static int
+parseenv(struct command *cmd, struct cmdinfo *info)
+{
+	size_t arrsize = 0;
+	size_t var = 0;
+	char *ptr;
+
+	size_t i;
+
+	info->vars = NULL;
+	info->vals = NULL;
+	for (i = 0; i < cmd->argc; ++i) {
+		if ((ptr = strchr(cmd->argv[i], '=')) && ptr != cmd->argv[i]) {
+			if (var >= arrsize) {
+				arrsize += ARGV_ALLOC_SIZE;
+				if (var == 0) {
+					info->vars = wemallocarray(arrsize,
+							sizeof(char *));
+					info->vals = wemallocarray(arrsize,
+							sizeof(char *));
+					if (!info->vars || !info->vals)
+						return -1;
+				} else {
+					char **oldvars = info->vars;
+					char **oldvals = info->vals;
+					info->vars = wereallocarray(info->vars,
+							arrsize,
+							sizeof(char *));
+					if (!info->vars) {
+						free(oldvars);
+						return -1;
+					}
+					info->vals = wereallocarray(info->vals,
+							arrsize,
+							sizeof(char *));
+					if (!info->vals) {
+						free(oldvals);
+						return -1;
+					}
+				}
+			}
+			info->vars[var] = cmd->argv[i];
+			info->vals[var++] = ptr + 1;
+			*ptr = '\0';
+		} else {
+			break;
+		}
+	}
+
+	if (var) {
+		info->vars[var] = NULL;
+		info->vals[var] = NULL;
+		cmd->argc -= var;
+		cmd->argv += var;
+	}
+	return 0;
+}
+
+static int
 parseredir(struct command *cmd, struct cmdinfo *info)
 {
 	size_t argend = 0, i;
@@ -1091,6 +1193,7 @@ alloccmd(size_t slots, struct command *cmd)
 {
 	if (!(cmd->argv = wemallocarray(sizeof(char *), slots)))
 		return -1;
+	cmd->orig_argv = cmd->argv;
 	if (!(cmd->dynallocinfo = wemallocarray(sizeof(int), slots)))
 		return -1;
 	return 0;
@@ -1102,6 +1205,7 @@ realloccmd(size_t slots, struct command *cmd)
 	char **oldargv = cmd->argv;
 	int *olddynallocinfo = cmd->dynallocinfo;
 	cmd->argv = wereallocarray(cmd->argv, sizeof(char *), slots);
+	cmd->orig_argv = cmd->argv;
 	if (!cmd->argv) {
 		free(oldargv);
 		return -1;
@@ -1119,10 +1223,10 @@ static void
 freecmd(const struct command *cmd)
 {
 	size_t i;
-	for (i = 0; i < cmd->argc; ++i)
+	for (i = 0; cmd->orig_argv[i]; ++i)
 		if (cmd->dynallocinfo[i])
-			free(cmd->argv[i]);
-	free(cmd->argv);
+			free(cmd->orig_argv[i]);
+	free(cmd->orig_argv);
 	free(cmd->dynallocinfo);
 }
 

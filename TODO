@@ -1,7 +1,7 @@
 - posix compliant cd builtin
-- passing env variable to command (VAR=val cmd)
 - variables and variable expansion
 - test on macos
 
 done:
 - implement noexec option
+- passing env variable to command (VAR=val cmd)
