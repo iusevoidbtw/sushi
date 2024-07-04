@@ -33,7 +33,7 @@
 
 /* #define ENABLE_PLEDGE */  /* enable usage of OpenBSD's pledge(2). */
 /* #define REPORT_SIGINT */  /* report if a process was killed by SIGINT. */
-#define REPORT_SIGPIPE       /* report if a process was killed by SIGPIPE. */
+/* #define REPORT_SIGPIPE */ /* report if a process was killed by SIGPIPE. */
 
 /*
  * ===========================================================================
