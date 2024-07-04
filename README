@@ -1,0 +1,63 @@
+sushi is a small, public domain shell for *nix systems written in POSIX C89,
+intended for interactive use.
+
+so far, sushi supports:
+- executing commands and pipelines of arbitrary length
+- redirection to/from any files/file descriptors and closing file descriptors
+via redirection
+- tilde and pathname expansion
+- builtins
+- pledge(2) support on OpenBSD
+
+sushi is still in early development and is NOT compliant with any POSIX
+standard.
+
+sushi has been tested to run on the following platforms:
+- Void GNU/Linux (musl variant), x86_64
+- Void GNU/Linux (musl variant), x86_64, linked against dietlibc
+- OpenBSD, 64-bit RISC-V
+
+sushi has been tested to compile and run successfully with:
+
+- GCC (https://gcc.gnu.org)
+- Clang (https://clang.llvm.org)
+- TCC (https://bellard.org/tcc)
+- PCC (http://pcc.ludd.ltu.se)
+- cproc (https://git.sr.ht/~mcf/cproc)
+
+------------------------------------------------------------------------------
+building
+
+most commonly, a simple:
+
+$ make
+
+will suffice. if your system doesn't have 'cc' as an alias to a C compiler,
+you'll have to specify it manually:
+
+$ make CC=gcc
+
+to link against dietlibc, you'll need to link it against dietlibc's libcompat.a:
+
+$ make CC='diet gcc' SRC='sushi.c <path-to-libcompat.a>'
+
+for example:
+
+$ make CC='diet gcc' SRC='sushi.c /opt/diet/lib-x86_64/libcompat.a'
+
+this is because dietlibc only provides the (now standardized by POSIX) getline()
+in its libcompat sub-library.
+
+------------------------------------------------------------------------------
+configuration
+
+sushi has some compile-time options that you can tweak by
+commenting/uncommenting the macro definitions at the top of sushi.c.
+
+as an example, to build with pledge(2) support for OpenBSD, edit the line
+with the ENABLE_PLEDGE definition:
+
+-/* #define ENABLE_PLEDGE */  /* enable usage of OpenBSD's pledge(2). */
++#define ENABLE_PLEDGE        /* enable usage of OpenBSD's pledge(2). */
+
+and rebuild the program.
