@@ -1,7 +1,10 @@
+- executing scripts (sushi [options] script)
+- read from ~/.sushirc and, if a login shell, ~/.sushi_profile
+- more supported options
 - posix compliant cd builtin
 - variables and variable expansion
 - test on macos
 
 done:
-- implement noexec option
 - passing env variable to command (VAR=val cmd)
+- implement noexec option
