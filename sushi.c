@@ -114,11 +114,12 @@ typedef uint64_t __u64;
 enum opt {
 	OPT_CLOBBER   = 1,
 	OPT_CMDLINE   = 1 << 1,
-	OPT_GLOB      = 1 << 2,
-	OPT_IGNOREEOF = 1 << 3,
-	OPT_PIPEFAIL  = 1 << 4,
-	OPT_STDIN     = 1 << 5,
-	OPT_VERBOSE   = 1 << 6
+	OPT_EXEC      = 1 << 2,
+	OPT_GLOB      = 1 << 3,
+	OPT_IGNOREEOF = 1 << 4,
+	OPT_PIPEFAIL  = 1 << 5,
+	OPT_STDIN     = 1 << 6,
+	OPT_VERBOSE   = 1 << 7
 };
 
 struct command {
@@ -232,7 +233,7 @@ static char defaultprompt[] = "$ ";
 
 static const char *argv0 = NULL;
 static char *prompt = defaultprompt;
-static int opts = OPT_GLOB | OPT_STDIN;
+static int opts = OPT_EXEC | OPT_GLOB | OPT_STDIN;
 
 static int laststatus = 0;
 static int lastfail = 0; /* used for pipefail */
@@ -479,7 +480,7 @@ exec(char *s)
 			return -1;
 		}
 
-		if (try_exec_builtin(cmd, &info) == 127) {
+		if ((opts & OPT_EXEC) && try_exec_builtin(cmd, &info) == 127) {
 			pid_t chpid = fork();
 			switch (chpid) {
 			case -1:
@@ -577,7 +578,7 @@ pipechain(char *s, pid_t *pgid, int *rpipe, int *wpipe, int *closethis)
 		return -1;
 	}
 
-	if (try_exec_builtin(cmd, &info) == 127) {
+	if ((opts & OPT_EXEC) && try_exec_builtin(cmd, &info) == 127) {
 		chpid = fork();
 		switch (chpid) {
 		case -1:
@@ -1274,6 +1275,8 @@ optlist(int plus)
 				(opts & OPT_STDIN) ? '-' : '+');
 		printf("set %co cmdline\n",
 				(opts & OPT_CMDLINE) ? '-' : '+');
+		printf("set %co exec\n",
+				(opts & OPT_EXEC) ? '-' : '+');
 		printf("set %co glob\n",
 				(opts & OPT_GLOB) ? '-' : '+');
 		printf("set %co ignoreeof\n",
@@ -1289,6 +1292,8 @@ optlist(int plus)
 				(opts & OPT_CLOBBER) ? "on" : "off");
 		printf("cmdline    %s\n",
 				(opts & OPT_CMDLINE) ? "on" : "off");
+		printf("exec       %s\n",
+				(opts & OPT_EXEC) ? "on" : "off");
 		printf("glob       %s\n",
 				(opts & OPT_GLOB) ? "on" : "off");
 		printf("ignoreeof  %s\n",
@@ -1341,6 +1346,18 @@ optparse(int initialized, int argc, char *argv[], char **cmdline)
 								argv[0],
 								argv[++i],
 								cmdline);
+					} else if (!strcmp(opt, "exec")) {
+						if (term < 0)
+							opttoggle(enable,
+								OPT_EXEC);
+						else
+							fprintf(stderr, "%s: "
+								"option '%s' "
+								"is ignored "
+								"in an inter"
+								"active shell"
+								"\n", argv[0],
+								opt);
 					} else if (!strcmp(opt, "glob")) {
 						opttoggle(enable, OPT_GLOB);
 					} else if (!strcmp(opt, "ignoreeof"
@@ -1385,6 +1402,15 @@ optparse(int initialized, int argc, char *argv[], char **cmdline)
 				break;
 			case 'f':
 				opttoggle(plus, OPT_GLOB);
+				break;
+			case 'n':
+				if (term < 0)
+					opttoggle(plus, OPT_EXEC);
+				else
+					fprintf(stderr, "%s: option '%cn' is "
+							"is ignored in an "
+							"interactive shell\n",
+							argv[0], argv[i][0]);
 				break;
 			case 's':
 				if (initialized) {
