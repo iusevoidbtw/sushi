@@ -190,7 +190,8 @@ static char *expand_tilde(const char *s, int *dynalloc);
 static void optcmdlineset(int initialized, const char *arg0, char *arg1,
 		char **cmdline);
 static void optlist(int plus);
-static int optparse(int initialized, int argc, char *argv[], char **cmdline);
+static int optparse(int initialized, int argc, char *argv[], char **cmdline,
+		FILE **input);
 static void opttoggle(int enable, int opt);
 
 /* functions used by builtins */
@@ -269,13 +270,13 @@ builtin_cd(const struct command *cmd, const struct cmdinfo *info)
 			logerr("too many operands specified");
 			ret = 1;
 		} else if (chdir(cmd->argv[arg]) < 0) {
-			logerr("chdir:");
+			logerr("chdir to '%s':", cmd->argv[arg]);
 			ret = 1;
 		}
 	} else {
 		const char *home = getenv("HOME");
 		if (home && chdir(home) < 0) {
-			logerr("chdir:");
+			logerr("chdir to '%s':", home);
 			ret = 1;
 		}
 	}
@@ -332,7 +333,7 @@ builtin_set(const struct command *cmd, const struct cmdinfo *info)
 		return MISC_FAILURE_STATUS;
 
 	if (cmd->argc > 1 && strcmp(cmd->argv[1], "--") != 0)
-		if (optparse(1, (int)(cmd->argc), cmd->argv, NULL) < 0)
+		if (optparse(1, (int)(cmd->argc), cmd->argv, NULL, NULL) < 0)
 			ret = 1;
 
 	if (end_builtin_redir(info, savefds) < 0)
@@ -539,7 +540,7 @@ exec(char *s)
 
 				/* execute the command */
 				if (execvp(cmd->argv[0], cmd->argv) < 0) {
-					logerr("execvp %s:", cmd->argv[0]);
+					logerr("execvp '%s':", cmd->argv[0]);
 					_exit((errno == ENOENT) ? 127 :
 						((errno == ENOEXEC) ? 126 :
 						 MISC_FAILURE_STATUS));
@@ -685,7 +686,7 @@ pipechain(char *s, pid_t *pgid, int *rpipe, int *wpipe, int *closethis)
 
 			/* execute the command */
 			if (execvp(cmd->argv[0], cmd->argv) < 0) {
-				logerr("execvp %s:", cmd->argv[0]);
+				logerr("execvp '%s':", cmd->argv[0]);
 				_exit((errno == ENOENT) ? 127 :
 					((errno == ENOEXEC) ? 126 :
 					 MISC_FAILURE_STATUS));
@@ -1146,7 +1147,7 @@ parseredir(struct command *cmd, struct cmdinfo *info)
 							flags);
 				}
 				if (info->redirfds[0] < 0) {
-					logerr("open %s:", redir_target);
+					logerr("open '%s':", redir_target);
 					return -1;
 				}
 			}
@@ -1412,22 +1413,36 @@ optlist(int plus)
 }
 
 static int
-optparse(int initialized, int argc, char *argv[], char **cmdline)
+optparse(int initialized, int argc, char *argv[], char **cmdline, FILE **input)
 {
 	/* used in main() and the set builtin. */
 	const char *curr;
+	int nomoreoptions = 0;
 	int plus;
 	int i; /* since argc is an int let's make this an int too */
 
 	for (i = 1; i < argc; ++i) {
-		if (argv[i][0] == '-') {
+		if (!initialized && (nomoreoptions || (argv[i][0] != '-'
+					&& argv[i][0] != '+'))) {
+			opts &= ~OPT_STDIN;
+			*input = fopen(argv[i], "r");
+			if (!(*input)) {
+				logerr("fopen '%s':", argv[i]);
+				return -1;
+			}
+			break;
+		} else if (!nomoreoptions && argv[i][0] == '-') {
+			if (argv[i][1] == '-' && !argv[i][2]) {
+				nomoreoptions = 1;
+				continue;
+			}
 			plus = 0;
-		} else if (argv[i][0] == '+') {
+		} else if (!nomoreoptions && argv[i][0] == '+') {
 			plus = 1;
 		} else {
 			fprintf(stderr, "%s: unrecognized option '%s'\n",
 					argv[0], argv[i]);
-			continue;
+			break;
 		}
 		curr = &argv[i][1];
 		while (curr) {
@@ -1900,6 +1915,7 @@ main(int argc, char *argv[])
 {
 	int interactive = 0;
 	char *cmdline = NULL;
+	FILE *input = stdin;
 	if (!argc)
 		return 1;
 	argv0 = argv[0];
@@ -1929,7 +1945,7 @@ main(int argc, char *argv[])
 		shell_pgid = getpgrp();
 	}
 
-	if (optparse(0, argc, argv, &cmdline) < 0)
+	if (optparse(0, argc, argv, &cmdline, &input) < 0)
 		return 1;	
 	if (cmdline) {
 		takecmd(cmdline);
@@ -1937,12 +1953,10 @@ main(int argc, char *argv[])
 		char *line = NULL;
 		size_t lsize = 0;
 		for (;;) {
-			if (interactive) {
-				fputs(prompt, stdout);
-				fflush(stdout);
-			}
+			if (interactive && (opts & OPT_STDIN))
+				fputs(prompt, stderr);
 			errno = 0;
-			if (getline(&line, &lsize, stdin) < 0) {
+			if (getline(&line, &lsize, input) < 0) {
 				if (!errno && interactive
 						&& (opts & OPT_IGNOREEOF)) {
 					fputs("use 'exit' to exit the "
